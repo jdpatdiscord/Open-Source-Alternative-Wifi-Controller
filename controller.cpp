@@ -89,13 +89,16 @@ T_WlanReasonCodeToString F_WlanReasonCodeToString = NULL;
  
 int bSilentMode = 0;
 
-int bLoadInterfacesAndNetworks = 0;
 int bLoadInterfaces = 0;
 int bLoadNetworks = 0;
+int bLoadProfiles = 0;
+int bExportProfiles = 0;
 
 int bPassFlag = 0;
 int bSsidFlag = 0;
 int bProfileFlag = 0;
+int bImportProfileFlag = 0;
+int bVerboseFlag = 0;
 
 int bDisconnectFlag = 0;
 
@@ -103,10 +106,13 @@ int bListInterfacesFlag = 0;
 int bListNetworksFlag = 0;
 int bListProfilesFlag = 0;
 
+DWORD dwWaitMillis = 30000;
+
 char* targetProfile = NULL;
 char* targetSsid = NULL;
 char* networkPass = NULL;
-char* newProfileName = NULL;
+char* newProfileName = (char*)"(Unknown)";
+char* existingProfileName = NULL;
 
 #define COND_ERR(cond, msg) if (cond) { if (!bSilentMode) { puts(msg); }; exit(1); }
 
@@ -121,13 +127,17 @@ static const char* intro_en = ""\
         "/d,  (Disconnect)  1   Disconnect from all interfaces.                     "                                "\n" \
         "/li, (List)        0   Generate a list of interfaces"                                                       "\n" \
         "/ln, (List)        0   Generate a list of networks"                                                         "\n" \
-        "/lp, (List)        0   Generate a list of existing profiles"                                                "\n" \
-        "/s,  (Silent)      0   A mode where no output whatsoever is generated."                                     "\n" \
+        "/ep, (Export)      0   Export all existing connection profiles to disk as XML (requires Administrator)"     "\n" \
+        "/ip, (Import)      1   Import an existing XML file describing a Wi-Fi profile."                             "\n" \
+        "/t,  (T-Limit)     1   Specify a integer time limit for scanning Wi-Fi networks, in milliseconds."          "\n" \
+        "/v,  (Verbose)     0   More information printed"                                                            "\n" \
+/*      "/s,  (Silent)      0   A mode where no output whatsoever is generated."                                     "\n" \ */
         ""                                                                                                           "\n" \
-        "Connect to Wi-Fi: osawc.exe /n ssid_here /k passwd_here /c new_profile_name"                                "\n" \
-        "Note: New profile name cannot already exist."                                                               "\n" \
-        ""                                                                                                           "\n" \
-        "Disconnect from Wi-Fi: osawc.exe /d"                                                                        "\n" ;
+        "Connect to Wi-Fi:                   osawc.exe /n ssid_here /k passwd_here /c new_profile_name"              "\n" \
+        "Disconnect from Wi-Fi:              osawc.exe /d"                                                           "\n" \
+        "Export network profiles as XML:     osawc.exe /ep"                                                          "\n" \
+        "Import network profiles as XML:     osawc.exe /ip <profile.XML>"                                            "\n" \
+        "Disconnect from Wi-Fi:              osawc.exe /d"                                                           "\n" ;
 
 void arg_parser(int argc, char* argv[])
 {
@@ -135,12 +145,36 @@ void arg_parser(int argc, char* argv[])
 
     int i; // current argument index
 
-    if (argc > 1)
+    //if (argc > 1)
     {
         for (i = 1; i < argc; ++i)
         {
             {
                 const char* new_flag = argv[i];
+                if (!strcmp(new_flag, "/ep"))
+                {
+                    bLoadInterfaces = 1;
+                    bLoadProfiles = 1;
+                    bExportProfiles = 1;
+                    continue;
+                }
+                if (!strcmp(new_flag, "/ip"))
+                {
+                    COND_ERR(bImportProfileFlag != 0, "/n has already been set");
+                    bImportProfileFlag = 1;
+                    bLoadInterfaces = 1;
+                    bLoadProfiles = 1;
+                    if (argc >= i - 1)
+                    {
+                        existingProfileName = argv[++i];
+                        continue;
+                    }
+                    else
+                    {
+                        puts("Argument required"); exit(0);
+                    }
+                    break;
+                }
                 if (!strcmp(new_flag, "/n"))
                 {
                     COND_ERR(bSsidFlag != 0, "/n has already been set");
@@ -151,6 +185,10 @@ void arg_parser(int argc, char* argv[])
                     {
                         targetSsid = argv[++i];
                         continue;
+                    }
+                    else
+                    {
+                        puts("Argument required"); exit(0);
                     }
                     break;
                 }
@@ -165,6 +203,10 @@ void arg_parser(int argc, char* argv[])
                         networkPass = argv[++i];
                         continue;
                     }
+                    else
+                    {
+                        puts("Argument required"); exit(0);
+                    }
                     break;
                 }
                 if (!strcmp(new_flag, "/p"))
@@ -177,6 +219,10 @@ void arg_parser(int argc, char* argv[])
                     {
                         targetProfile = argv[++i];
                         continue;
+                    }
+                    else
+                    {
+                        puts("Argument required"); exit(0);
                     }
                     break;
                 }
@@ -193,13 +239,14 @@ void arg_parser(int argc, char* argv[])
                 if (!strcmp(new_flag, "/d"))
                 {
                     bDisconnectFlag = 1;
+                    bLoadInterfaces = 1;
                     continue;
                 }
-                if (!strcmp(new_flag, "/s"))
-                {
-                    bSilentMode = 1;
-                    continue;
-                }
+                //if (!strcmp(new_flag, "/s"))
+                //{
+                //    bSilentMode = 1;
+                //    continue;
+                //}
                 if (!strcmp(new_flag, "/li"))
                 {
                     bLoadInterfaces = 1;
@@ -219,13 +266,29 @@ void arg_parser(int argc, char* argv[])
                     bListProfilesFlag = 1;
                     continue;
                 }
+                if (!strcmp(new_flag, "/v"))
+                {
+                    bVerboseFlag = 1;
+                    continue;
+                }
+                if (!strcmp(new_flag, "/t"))
+                {
+                    //dwWaitMillis = atoi()
+                    if (argc >= i - 1)
+                    {
+                        dwWaitMillis = atoi(argv[++i]);
+                        if (dwWaitMillis == 0) // if invalid:
+                            dwWaitMillis = 30000;
+                        continue;
+                    }
+                    else
+                    {
+                        puts("Argument required"); exit(0);
+                    }
+                    continue;
+                }
             }
         }
-    }
-    else
-    {
-        puts(intro_en);
-        exit(0);
     }
 }
 
@@ -280,16 +343,16 @@ const char* get_interface_string_enum(WLAN_INTERFACE_STATE value)
 {
     switch (value)
     {
-    case wlan_interface_state_not_ready:             return "wlan_interface_state_not_ready";
-    case wlan_interface_state_connected:             return "wlan_interface_state_connected";
-    case wlan_interface_state_ad_hoc_network_formed: return "wlan_interface_state_ad_hoc_network_formed";
-    case wlan_interface_state_disconnecting:         return "wlan_interface_state_disconnecting";
-    case wlan_interface_state_disconnected:          return "wlan_interface_state_disconnected";
-    case wlan_interface_state_associating:           return "wlan_interface_state_associating";
-    case wlan_interface_state_discovering:           return "wlan_interface_state_discovering";
-    case wlan_interface_state_authenticating:        return "wlan_interface_state_authenticating";
-    default:
-        return "(Unknown)";
+        case wlan_interface_state_not_ready:             return "wlan_interface_state_not_ready";
+        case wlan_interface_state_connected:             return "wlan_interface_state_connected";
+        case wlan_interface_state_ad_hoc_network_formed: return "wlan_interface_state_ad_hoc_network_formed";
+        case wlan_interface_state_disconnecting:         return "wlan_interface_state_disconnecting";
+        case wlan_interface_state_disconnected:          return "wlan_interface_state_disconnected";
+        case wlan_interface_state_associating:           return "wlan_interface_state_associating";
+        case wlan_interface_state_discovering:           return "wlan_interface_state_discovering";
+        case wlan_interface_state_authenticating:        return "wlan_interface_state_authenticating";
+        default:
+            return "(Unknown)";
     }
 }
 
@@ -359,6 +422,11 @@ const wchar_t* templateF_WlanProfileXml = LR"(<?xml version="1.0"?>
 
 int main(int argc, char* argv[])
 {
+    if (argc <= 1)
+    {
+        puts(intro_en);
+        return 0;
+    }
     arg_parser(argc, argv);
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
@@ -380,6 +448,9 @@ int main(int argc, char* argv[])
     F_WlanReasonCodeToString = (T_WlanReasonCodeToString)GetProcAddress(hWlanapiDll, "WlanReasonCodeToString");
 #endif
 
+    WCHAR wstrDefaultBuf[3072];
+    CHAR strDefaultBuf[6144];
+
     DWORD dwResult = 0;
 
     DWORD negotiatedWifiVersion = 0;
@@ -388,7 +459,7 @@ int main(int argc, char* argv[])
     if (F_WlanOpenHandle(2, NULL, &negotiatedWifiVersion, &wlanHandle) != ERROR_SUCCESS)
     {
         fprintf(stdout, "Opening Win32 WLAN API failed (F_WlanOpenHandle)\n");
-        exit(-1);
+        return -1;
     }
 
     if (bLoadInterfaces)
@@ -397,13 +468,13 @@ int main(int argc, char* argv[])
         if (dwResult != ERROR_SUCCESS)
         {
             fprintf(stdout, "Enumerating device list failed (F_WlanEnumInterfaces)\n");
-            exit(-1);
+            return -1;
         };
 
         if (pInterfaceList->dwNumberOfItems == 0)
         {
             fprintf(stdout, "There are no devices available (F_WlanEnumInterfaces)\n");
-            exit(-1);
+            return -1;
         }
 
         HANDLE scanEvent = NULL;
@@ -417,14 +488,13 @@ int main(int argc, char* argv[])
 
             while (interfaceInfo.isState != wlan_interface_state_connected && interfaceInfo.isState != wlan_interface_state_disconnected)
             {
-                fprintf(stdout, "yielding\n");
                 Sleep(0); // dont mess with it while its doing stuff(?)
             }
 
             if (bDisconnectFlag)
             {
                 /* TODO: Yield until disconnect completed */
-                if (interfaceInfo.isState == wlan_interface_state_connected)
+                if (interfaceInfo.isState != wlan_interface_state_disconnected)
                 {
                     dwResult = F_WlanDisconnect(wlanHandle, &interfaceGuid, NULL);
                     if (dwResult != ERROR_SUCCESS)
@@ -437,14 +507,46 @@ int main(int argc, char* argv[])
 
             if (bListInterfacesFlag)
             {
-                fprintf(stdout, "%ls\n", interfaceInfo.strInterfaceDescription);
+                fprintf(stdout, "Interface = %ls, State = %s\n", interfaceInfo.strInterfaceDescription, get_interface_string_enum(interfaceInfo.isState));
                 if (interfaceInfo.isState == wlan_interface_state_connected)
                 {
                     fprintf(stdout, "Currently connected with %ls.\n", interfaceInfo.strInterfaceDescription);
                 }
             }
 
-            if (bListProfilesFlag)
+            if (bImportProfileFlag)
+            {
+                FILE* f = fopen(existingProfileName, "r");
+                if (!f)
+                {
+                    fprintf(stdout, "\n\t\tFailed to open existing profile\n");
+                    osawc_free();
+                    return -1;
+                }
+
+                size_t filesize;
+                fseek(f, 0, SEEK_END);
+                filesize = ftell(f);
+                rewind(f);
+
+                fread(wstrDefaultBuf, 2, filesize / 2, f);
+
+                DWORD notValidReason = 0;
+                dwResult = F_WlanSetProfile(wlanHandle, &interfaceGuid, WLAN_PROFILE_USER, wstrDefaultBuf, NULL, TRUE, NULL, &notValidReason);
+                if (dwResult != ERROR_SUCCESS || notValidReason != ERROR_SUCCESS)
+                {
+                    F_WlanReasonCodeToString(notValidReason, sizeof(wstrDefaultBuf) / sizeof(decltype(*wstrDefaultBuf)), wstrDefaultBuf, NULL);
+
+                    fprintf(stdout, "Failed to set profile. result = %08X, reason: %ls (F_WlanSetProfile)\n", dwResult, wstrDefaultBuf);
+
+                    osawc_free();
+
+                    return -1;
+                }
+                else fprintf(stdout, "Imported profile successfully.\n");
+            }
+
+            if (bListProfilesFlag || bExportProfiles || bLoadProfiles)
             {
                 dwResult = F_WlanGetProfileList(wlanHandle, &interfaceGuid, NULL, &pProfileList);
                 if (dwResult != ERROR_SUCCESS)
@@ -466,13 +568,30 @@ int main(int argc, char* argv[])
                         fprintf(stdout, "\tRun as administrator to get plaintext key.\n");
                         profileFlags = 0;
                         dwResult = F_WlanGetProfile(wlanHandle, &interfaceGuid, profileInfo.strProfileName, NULL, &profileXmlWstr, &profileFlags, NULL);
-                        if (dwResult != ERROR_SUCCESS)
+                        if (dwResult != ERROR_SUCCESS || profileXmlWstr == NULL)
                         {
                             fprintf(stdout, "\tFailed to get profile. result: %08X\n", dwResult);
                             continue;
                         }
                     }
-                    fprintf(stdout, "\n%ls\n", profileXmlWstr);
+
+                    //if (bListProfilesFlag)
+                    //    fprintf(stdout, "\n%ls\n", profileXmlWstr);
+
+                    if (bExportProfiles)
+                    {
+                        wcscpy(wstrDefaultBuf, profileInfo.strProfileName);
+                        wcscat(wstrDefaultBuf, L".xml");
+
+                        FILE* f = _wfopen(wstrDefaultBuf, L"w+,ccs=UTF-16LE");
+                        if (f)
+                        {
+                            fseek(f, 0, SEEK_SET);
+                            fwrite(profileXmlWstr, 2, wcslen(profileXmlWstr), f);
+                            fclose(f);
+                        }
+                    }
+
                     F_WlanFreeMemory(profileXmlWstr);
                 }
             }
@@ -490,7 +609,7 @@ int main(int argc, char* argv[])
 
                     fprintf(stdout, "Failed to register a notifier (F_WlanRegisterNotification)\n");
                     osawc_free();
-                    exit(-1);
+                    return -1;
                 }
 
                 dwResult = F_WlanScan(wlanHandle, &interfaceGuid, NULL, NULL, NULL);
@@ -501,7 +620,7 @@ int main(int argc, char* argv[])
                     // Continue because it isn't over yet
                 }
 
-                dwResult = WaitForSingleObject(cbInfo.scanEvent, 30000);
+                dwResult = WaitForSingleObject(cbInfo.scanEvent, dwWaitMillis);
 
                 switch (dwResult)
                 {
@@ -519,8 +638,7 @@ int main(int argc, char* argv[])
 
                 if (bProfileFlag)
                 {
-                    WCHAR fmtProfileName[512];
-                    dwResult = MultiByteToWideChar(CP_UTF8, 0, targetProfile, strlen(targetProfile), fmtProfileName, sizeof(fmtProfileName) / sizeof(WCHAR));
+                    dwResult = MultiByteToWideChar(CP_UTF8, 0, targetProfile, strlen(targetProfile), wstrDefaultBuf, sizeof(wstrDefaultBuf) / sizeof(WCHAR));
 
                     WLAN_CONNECTION_PARAMETERS params;
                     params.dot11BssType = dot11_BSS_type_any;
@@ -528,7 +646,7 @@ int main(int argc, char* argv[])
                     params.pDesiredBssidList = NULL;
                     params.dwFlags = 0;
                     params.wlanConnectionMode = wlan_connection_mode_profile;
-                    params.strProfile = fmtProfileName;
+                    params.strProfile = wstrDefaultBuf;
 
                     dwResult = F_WlanConnect(wlanHandle, &interfaceGuid, &params, NULL);
                     if (dwResult != ERROR_SUCCESS)
@@ -538,7 +656,7 @@ int main(int argc, char* argv[])
 
                         osawc_free();
 
-                        exit(-1);
+                        return -1;
                     }
                 }
 
@@ -547,7 +665,7 @@ int main(int argc, char* argv[])
                     dwResult = F_WlanGetAvailableNetworkList(wlanHandle, &interfaceGuid, O_WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES | O_WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES, NULL, &pNetworkList);
                     if (dwResult != ERROR_SUCCESS)
                     {
-                        fprintf(stdout, "Failed to get available network list on interface (%ls) (F_WlanGetAvailableNetworkList)", pInterfaceList->InterfaceInfo[ii].strInterfaceDescription);
+                        fprintf(stdout, "\n\tFailed to get available network list on interface (%ls) (F_WlanGetAvailableNetworkList)", pInterfaceList->InterfaceInfo[ii].strInterfaceDescription);
                         continue;
                     }
 
@@ -557,14 +675,21 @@ int main(int argc, char* argv[])
 
                         if (bListNetworksFlag)
                         {
-                            fprintf(stdout, "\tAvailable network on interface: %.*s\n", targetNetwork.dot11Ssid.uSSIDLength, (char*)targetNetwork.dot11Ssid.ucSSID);
-                            fprintf(stdout, "\t\tConnectable?: %s\n", targetNetwork.bNetworkConnectable ? "TRUE" : "FALSE");
-                            if (!targetNetwork.bNetworkConnectable)
-                                fprintf(stdout, "\t\tNot connectable reason -> WLAN_REASON_CODE = %08X\n", targetNetwork.wlanNotConnectableReason);
-                            fprintf(stdout, "\t\tSecurity enabled on network?: %s\n", targetNetwork.bSecurityEnabled ? "TRUE" : "FALSE");
-                            fprintf(stdout, "\t\tSignal strength: %u\n", targetNetwork.wlanSignalQuality);
-                            fprintf(stdout, "\t\tDefault algorithm: %s\n", get_dot11_auth_string_enum(targetNetwork.dot11DefaultAuthAlgorithm));
-                            fprintf(stdout, "\t\tDefault cipher: %s\n", get_dot11_cipher_string_enum(targetNetwork.dot11DefaultCipherAlgorithm));
+                            if (bVerboseFlag)
+                            {
+                                fprintf(stdout, "\tAvailable network on interface: %.*s\n", targetNetwork.dot11Ssid.uSSIDLength, (char*)targetNetwork.dot11Ssid.ucSSID);
+                                fprintf(stdout, "\t\tConnectable?: %s\n", targetNetwork.bNetworkConnectable ? "TRUE" : "FALSE");
+                                if (!targetNetwork.bNetworkConnectable)
+                                    fprintf(stdout, "\t\tNot connectable reason -> WLAN_REASON_CODE = %08X\n", targetNetwork.wlanNotConnectableReason);
+                                fprintf(stdout, "\t\tSecurity enabled on network?: %s\n", targetNetwork.bSecurityEnabled ? "TRUE" : "FALSE");
+                                fprintf(stdout, "\t\tSignal strength: %u\n", targetNetwork.wlanSignalQuality);
+                                fprintf(stdout, "\t\tDefault algorithm: %s\n", get_dot11_auth_string_enum(targetNetwork.dot11DefaultAuthAlgorithm));
+                                fprintf(stdout, "\t\tDefault cipher: %s\n", get_dot11_cipher_string_enum(targetNetwork.dot11DefaultCipherAlgorithm));
+                            }
+                            else
+                            {
+                                fprintf(stdout, "\tStrength: %2i | %.*s\n", targetNetwork.wlanSignalQuality, targetNetwork.dot11Ssid.uSSIDLength, (char*)targetNetwork.dot11Ssid.ucSSID);
+                            }
                         }
 
                         if (bSsidFlag || bPassFlag)
@@ -573,41 +698,36 @@ int main(int argc, char* argv[])
                             {
                                 if (targetNetwork.bNetworkConnectable == FALSE)
                                 {
-                                    fprintf(stdout, "The specified SSID (%.*s) is marked as not connectable. WLAN_REASON_CODE = %04X\n", targetNetwork.dot11Ssid.uSSIDLength, (char*)targetNetwork.dot11Ssid.ucSSID, targetNetwork.wlanNotConnectableReason);
+                                    fprintf(stdout, "\n\t\tThe specified SSID (%.*s) is marked as not connectable. WLAN_REASON_CODE = %04X\n", targetNetwork.dot11Ssid.uSSIDLength, (char*)targetNetwork.dot11Ssid.ucSSID, targetNetwork.wlanNotConnectableReason);
                                     osawc_free();
-                                    exit(-1);
+                                    return -1;
                                 }
 
                                 if (targetNetwork.dwFlags & O_WLAN_AVAILABLE_NETWORK_CONNECTED)
                                 {
-                                    fprintf(stdout, "Already connected to this network (%s)\n", (char*)targetNetwork.dot11Ssid.ucSSID);
+                                    fprintf(stdout, "\n\t\tAlready connected to this network (%s)\n", (char*)targetNetwork.dot11Ssid.ucSSID);
                                     osawc_free();
-
-                                    exit(-1);
+                                    return -1;
                                 }
 
                                 // need to create a new profile
-                                WCHAR newProfileXmlBuf[3072];
-                                swprintf_s(newProfileXmlBuf, 3072, templateF_WlanProfileXml, newProfileName, targetSsid, "passPhrase", networkPass);
+                                swprintf_s(wstrDefaultBuf, sizeof(wstrDefaultBuf) / sizeof(decltype(*wstrDefaultBuf)), templateF_WlanProfileXml, newProfileName, targetSsid, "passPhrase", networkPass);
 
                                 DWORD notValidReason = 0;
-                                dwResult = F_WlanSetProfile(wlanHandle, &interfaceGuid, WLAN_PROFILE_USER, newProfileXmlBuf, NULL, TRUE, NULL, &notValidReason);
-                                if (dwResult != ERROR_SUCCESS)
+                                dwResult = F_WlanSetProfile(wlanHandle, &interfaceGuid, WLAN_PROFILE_USER, wstrDefaultBuf, NULL, TRUE, NULL, &notValidReason);
+                                if (dwResult != ERROR_SUCCESS || notValidReason != ERROR_SUCCESS)
                                 {
-                                    fprintf(stdout, "Failed to set profile. result = %08X, notValidReason: %08X (F_WlanSetProfile)\n", dwResult, notValidReason);
-
                                     WCHAR reasonStr[512];
                                     F_WlanReasonCodeToString(notValidReason, 512, reasonStr, NULL);
 
-                                    fprintf(stdout, "Validation reason: %ls\n", reasonStr);
+                                    fprintf(stdout, "\n\t\tFailed to set profile. result = %08X, reason: %ls (F_WlanSetProfile)\n", dwResult, reasonStr);
 
                                     osawc_free();
 
-                                    exit(-1);
+                                    return -1;
                                 }
 
-                                WCHAR fmtProfileName[512];
-                                MultiByteToWideChar(CP_UTF8, 0, targetProfile, strlen(targetProfile), fmtProfileName, sizeof(fmtProfileName) / sizeof(WCHAR));
+                                MultiByteToWideChar(CP_UTF8, 0, targetProfile, strlen(targetProfile), wstrDefaultBuf, sizeof(wstrDefaultBuf) / sizeof(decltype(*wstrDefaultBuf)));
 
                                 // connect with new profile
                                 WLAN_CONNECTION_PARAMETERS params;
@@ -616,28 +736,21 @@ int main(int argc, char* argv[])
                                 params.pDesiredBssidList = NULL;
                                 params.dwFlags = 0;
                                 params.wlanConnectionMode = wlan_connection_mode_profile;
-                                params.strProfile = fmtProfileName;
+                                params.strProfile = wstrDefaultBuf;
 
                                 dwResult = F_WlanConnect(wlanHandle, &interfaceGuid, &params, NULL);
                                 if (dwResult != ERROR_SUCCESS)
                                 {
-                                    fprintf(stdout, "Failed to connect with new profile. (F_WlanConnect)\n");
-                                    fprintf(stdout, "result = %08X, where ERROR_INVALID_PARAMETER = %08X\n", dwResult, ERROR_INVALID_PARAMETER);
+                                    fprintf(stdout, "\n\t\tFailed to connect with new profile. (F_WlanConnect)\n");
+                                    fprintf(stdout, "\t\tresult = %08X, where ERROR_INVALID_PARAMETER = %08X\n", dwResult, ERROR_INVALID_PARAMETER);
 
                                     osawc_free();
 
-                                    exit(-1);
+                                    return -1;
                                 }
 
-                                osawc_free();
+                                // fall through to free and exit
 
-                                if (F_WlanCloseHandle(wlanHandle, NULL) != ERROR_SUCCESS)
-                                {
-                                    fprintf(stdout, "Closing Win32 WLAN API failed (F_WlanCloseHandle)\n");
-                                    exit(-1);
-                                }
-
-                                return 0;
                             }//if (!strncmp((char*)targetNetwork.dot11Ssid.ucSSID, targetSsid, targetNetwork.dot11Ssid.uSSIDLength))
                         }//if (bSsidFlag || bPassFlag)
                     }//for (DWORD ni = 0; ni < pNetworkList->dwNumberOfItems; ++ni)
@@ -650,7 +763,7 @@ int main(int argc, char* argv[])
 
     if (F_WlanCloseHandle(wlanHandle, NULL) != ERROR_SUCCESS)
     {
-        fprintf(stdout, "Closing Win32 WLAN API failed (F_WlanCloseHandle)\n");
+        fprintf(stdout, "\nClosing Win32 WLAN API failed (F_WlanCloseHandle)\n");
         exit(-1);
     };
 
