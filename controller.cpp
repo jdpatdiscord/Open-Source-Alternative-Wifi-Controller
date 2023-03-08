@@ -449,7 +449,7 @@ int main(int argc, char* argv[])
 #endif
 
     WCHAR wstrDefaultBuf[3072];
-    CHAR strDefaultBuf[6144];
+    CHAR strDefaultBuf[3072];
 
     DWORD dwResult = 0;
 
@@ -479,16 +479,19 @@ int main(int argc, char* argv[])
 
         HANDLE scanEvent = NULL;
         if (bLoadNetworks)
-            scanEvent = CreateEventA(NULL, NULL, NULL, NULL);
+            scanEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
 
-        for (DWORD ii = 0; ii < pInterfaceList->dwNumberOfItems; ++ii)
+        for (DWORD dwCurrentInterfaceIndex = 0; 
+                   dwCurrentInterfaceIndex < pInterfaceList->dwNumberOfItems; 
+                   ++dwCurrentInterfaceIndex)
         {
-            WLAN_INTERFACE_INFO interfaceInfo = pInterfaceList->InterfaceInfo[ii];
+            WLAN_INTERFACE_INFO interfaceInfo = pInterfaceList->InterfaceInfo[dwCurrentInterfaceIndex];
             GUID interfaceGuid = interfaceInfo.InterfaceGuid;
 
             while (interfaceInfo.isState != wlan_interface_state_connected && interfaceInfo.isState != wlan_interface_state_disconnected)
             {
-                Sleep(0); // dont mess with it while its doing stuff(?)
+                // Do not try to do stuff while intermittent between connected & disconnected
+                Sleep(0);
             }
 
             if (bDisconnectFlag)
@@ -575,9 +578,6 @@ int main(int argc, char* argv[])
                         }
                     }
 
-                    //if (bListProfilesFlag)
-                    //    fprintf(stdout, "\n%ls\n", profileXmlWstr);
-
                     if (bExportProfiles)
                     {
                         wcscpy(wstrDefaultBuf, profileInfo.strProfileName);
@@ -616,8 +616,7 @@ int main(int argc, char* argv[])
                 if (dwResult != ERROR_SUCCESS)
                 {
                     fprintf(stdout, "Failed to scan network (F_WlanScan), continuing to next network\n");
-                    continue;
-                    // Continue because it isn't over yet
+                    continue; // Not over yet, continue to next interface
                 }
 
                 dwResult = WaitForSingleObject(cbInfo.scanEvent, dwWaitMillis);
@@ -665,7 +664,7 @@ int main(int argc, char* argv[])
                     dwResult = F_WlanGetAvailableNetworkList(wlanHandle, &interfaceGuid, O_WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES | O_WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES, NULL, &pNetworkList);
                     if (dwResult != ERROR_SUCCESS)
                     {
-                        fprintf(stdout, "\n\tFailed to get available network list on interface (%ls) (F_WlanGetAvailableNetworkList)", pInterfaceList->InterfaceInfo[ii].strInterfaceDescription);
+                        fprintf(stdout, "\n\tFailed to get available network list on interface (%ls) (F_WlanGetAvailableNetworkList)", pInterfaceList->InterfaceInfo[dwCurrentInterfaceIndex].strInterfaceDescription);
                         continue;
                     }
 
@@ -717,10 +716,9 @@ int main(int argc, char* argv[])
                                 dwResult = F_WlanSetProfile(wlanHandle, &interfaceGuid, WLAN_PROFILE_USER, wstrDefaultBuf, NULL, TRUE, NULL, &notValidReason);
                                 if (dwResult != ERROR_SUCCESS || notValidReason != ERROR_SUCCESS)
                                 {
-                                    WCHAR reasonStr[512];
-                                    F_WlanReasonCodeToString(notValidReason, 512, reasonStr, NULL);
+                                    F_WlanReasonCodeToString(notValidReason, sizeof(wstrDefaultBuf) / sizeof(decltype(*wstrDefaultBuf)), wstrDefaultBuf, NULL);
 
-                                    fprintf(stdout, "\n\t\tFailed to set profile. result = %08X, reason: %ls (F_WlanSetProfile)\n", dwResult, reasonStr);
+                                    fprintf(stdout, "\n\t\tFailed to set profile. result = %08X, reason: %ls (F_WlanSetProfile)\n", dwResult, wstrDefaultBuf);
 
                                     osawc_free();
 
@@ -756,7 +754,7 @@ int main(int argc, char* argv[])
                     }//for (DWORD ni = 0; ni < pNetworkList->dwNumberOfItems; ++ni)
                 }//if (bListNetworksFlag || bSsidFlag || bPassFlag)
             }//if (bLoadNetworks)
-        }//for (DWORD ii = 0; ii < pInterfaceList->dwNumberOfItems; ++ii)
+        }//for (DWORD dwCurrentInterfaceIndex = 0; dwCurrentInterfaceIndex < pInterfaceList->dwNumberOfItems; ++dwCurrentInterfaceIndex)
     }//if (bLoadInterfaces)
 
     osawc_free();
